@@ -3,13 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>家計簿ダッシュボード</title>
-    <meta name="theme-color" content="#4f46e5"/>
-    <link rel="manifest" href="manifest.json">
-    <link rel="apple-touch-icon" href="icons/icon-192x192.png">
+    <title>対話型家計簿ダッシュボード (スプレッドシート連携版)</title>
     <!-- Chosen Palette: Warm Neutrals with Soft Accents -->
-    <!-- Application Structure Plan: The app now features a two-page layout managed by showing/hiding divs. The main page contains the dashboard, and a new "Details" page shows a breakdown of trip expenses by destination (memo). A memo field has been added to the reimbursement form. -->
-    <!-- Visualization & Content Choices: Added helper buttons for trip expense type ("Hotel", "Transport"). The memo format is now composite, including this type. The details page logic is updated to parse this new format correctly. -->
+    <!-- Application Structure Plan: The main input form is enhanced with a conditional section for "Fixed Costs". When "固定費" is selected from the main dropdown, a new set of buttons for sub-categories appears, allowing for more detailed and structured data entry for fixed expenses. -->
+    <!-- Visualization & Content Choices: A new container for fixed cost buttons is added and its visibility is toggled via JavaScript based on the main category selection. The "Add Expense" logic is updated to handle this new conditional input, reading the selected fixed cost sub-category and an optional memo for the "Other" option. -->
     <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
@@ -20,9 +17,9 @@
         body { font-family: 'Inter', 'Noto Sans JP', sans-serif; background-color: #f5f5f4; }
         .chart-container { position: relative; width: 100%; max-width: 280px; margin-left: auto; margin-right: auto; height: 280px; max-height: 40vh; }
         @media (min-width: 1024px) { .chart-container { max-width: 240px; height: 240px; } }
-        .tab-btn, .trip-type-btn { transition: all 0.2s ease-in-out; }
-        .tab-btn.active, .trip-type-btn.active { background-color: #4f46e5; color: white; }
-        .tab-btn:not(.active), .trip-type-btn:not(.active) { background-color: #e5e7eb; color: #374151; }
+        .tab-btn, .trip-type-btn, .fixed-cost-btn { transition: all 0.2s ease-in-out; }
+        .tab-btn.active, .trip-type-btn.active, .fixed-cost-btn.active { background-color: #4f46e5; color: white; }
+        .tab-btn:not(.active), .trip-type-btn:not(.active), .fixed-cost-btn:not(.active) { background-color: #e5e7eb; color: #374151; }
         .saving-indicator { display: none; }
         .saving-indicator.saving { display: inline-block; animation: spin 1s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -37,7 +34,20 @@
         <section class="mb-8 bg-indigo-50 p-6 rounded-2xl shadow-md"><h2 class="text-xl font-bold mb-3 text-indigo-800">Googleスプレッドシート連携</h2><div class="space-y-4"><div><label for="apps-script-url" class="block text-sm font-medium text-gray-700 mb-1">ウェブアプリURL</label><input type="url" id="apps-script-url" placeholder="Apps ScriptのウェブアプリURLを貼り付け" class="w-full px-4 py-2 bg-white border border-indigo-200 rounded-lg focus:border-indigo-500 focus:ring-indigo-500 outline-none transition"></div><div><label for="spreadsheet-url" class="block text-sm font-medium text-gray-700 mb-1">スプレッドシートURL（任意）</label><input type="url" id="spreadsheet-url" placeholder="確認したいスプレッドシートのURLを貼り付け" class="w-full px-4 py-2 bg-white border border-indigo-200 rounded-lg focus:border-indigo-500 focus:ring-indigo-500 outline-none transition"></div><div class="flex flex-col sm:flex-row items-center gap-3"><button id="save-settings-btn" class="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-lg transition-all flex-shrink-0">設定を保存＆再読込</button><a id="view-sheet-btn" href="#" target="_blank" rel="noopener noreferrer" class="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition-all flex-shrink-0 text-center hidden">シートを開く</a></div></div></section>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-            <section id="input-section" class="bg-white p-6 rounded-2xl shadow-lg"><h2 class="text-xl font-bold mb-4">支出を記録する</h2><div class="space-y-4"><div><label for="amount" class="block text-sm font-medium text-stone-700 mb-1">金額 (円)</label><input type="number" id="amount" placeholder="例: 1500" class="w-full p-3 bg-stone-100 border-2 border-transparent rounded-lg text-lg focus:bg-white focus:border-indigo-500 outline-none transition"></div><div><label for="category" class="block text-sm font-medium text-stone-700 mb-1">カテゴリー</label><select id="category" class="w-full p-3 bg-stone-100 border-2 border-transparent rounded-lg text-lg focus:bg-white focus:border-indigo-500 outline-none transition"><option>食費</option> <option>日用品</option> <option>コンビニ</option> <option>交通費</option> <option>交際費</option><option>病院</option> <option>出張中の費用</option> <option>出張費</option> <option>ネットショッピング（日用品）</option> <option>ネットショッピング（娯楽）</option> <option>その他</option></select></div><div id="trip-date-container" class="hidden"><label for="trip-date" class="block text-sm font-medium text-stone-700 mb-1">出張日</label><input type="date" id="trip-date" class="w-full p-3 bg-stone-100 border-2 border-transparent rounded-lg text-lg focus:bg-white focus:border-indigo-500 outline-none transition"></div><div id="memo-container" class="hidden"> <label for="memo" class="block text-sm font-medium text-stone-700 mb-1">メモ</label> <input type="text" id="memo" placeholder="内容を入力" class="w-full p-3 bg-stone-100 border-2 border-transparent rounded-lg text-lg focus:bg-white focus:border-indigo-500 outline-none transition"></div><div id="trip-type-container" class="hidden"><label class="block text-sm font-medium text-stone-700 mb-1">種別</label><div class="flex space-x-2"><button class="trip-type-btn flex-1 py-2 px-3 rounded-lg text-sm font-semibold" data-type="ホテル">ホテル</button><button class="trip-type-btn flex-1 py-2 px-3 rounded-lg text-sm font-semibold" data-type="交通費">交通費</button></div></div><div><button id="add-expense-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:shadow-lg transition-all text-lg mt-2">支出を追加</button></div></div></section>
+            <section id="input-section" class="bg-white p-6 rounded-2xl shadow-lg"><h2 class="text-xl font-bold mb-4">支出を記録する</h2><div class="space-y-4"><div><label for="amount" class="block text-sm font-medium text-stone-700 mb-1">金額 (円)</label><input type="number" id="amount" placeholder="例: 1500" class="w-full p-3 bg-stone-100 border-2 border-transparent rounded-lg text-lg focus:bg-white focus:border-indigo-500 outline-none transition"></div><div><label for="category" class="block text-sm font-medium text-stone-700 mb-1">カテゴリー</label><select id="category" class="w-full p-3 bg-stone-100 border-2 border-transparent rounded-lg text-lg focus:bg-white focus:border-indigo-500 outline-none transition"><option>食費</option> <option>日用品</option> <option>コンビニ</option> <option>交通費</option> <option>交際費</option><option>病院</option><option>固定費</option> <option>出張中の費用</option> <option>出張費</option> <option>ネットショッピング（日用品）</option> <option>ネットショッピング（娯楽）</option> <option>その他</option></select></div>
+            <div id="fixed-cost-container" class="hidden space-y-2">
+                <label class="block text-sm font-medium text-stone-700">固定費の内訳</label>
+                <div class="grid grid-cols-3 gap-2">
+                    <button class="fixed-cost-btn py-2 px-3 rounded-lg text-sm font-semibold" data-category="通信費">通信費</button>
+                    <button class="fixed-cost-btn py-2 px-3 rounded-lg text-sm font-semibold" data-category="光熱費">光熱費</button>
+                    <button class="fixed-cost-btn py-2 px-3 rounded-lg text-sm font-semibold" data-category="水道費">水道費</button>
+                    <button class="fixed-cost-btn py-2 px-3 rounded-lg text-sm font-semibold" data-category="ガス代">ガス代</button>
+                    <button class="fixed-cost-btn py-2 px-3 rounded-lg text-sm font-semibold" data-category="保育園関連">保育園関連</button>
+                    <button class="fixed-cost-btn py-2 px-3 rounded-lg text-sm font-semibold" data-category="その他（固定費）">その他</button>
+                </div>
+                <div id="fixed-cost-memo-container" class="hidden"><input type="text" id="fixed-cost-memo" placeholder="固定費の内容を入力" class="w-full p-3 bg-stone-100 border-2 border-transparent rounded-lg text-lg focus:bg-white focus:border-indigo-500 outline-none transition"></div>
+            </div>
+            <div id="trip-date-container" class="hidden"><label for="trip-date" class="block text-sm font-medium text-stone-700 mb-1">出張日</label><input type="date" id="trip-date" class="w-full p-3 bg-stone-100 border-2 border-transparent rounded-lg text-lg focus:bg-white focus:border-indigo-500 outline-none transition"></div><div id="memo-container" class="hidden"> <label for="memo" class="block text-sm font-medium text-stone-700 mb-1">メモ</label> <input type="text" id="memo" placeholder="内容を入力" class="w-full p-3 bg-stone-100 border-2 border-transparent rounded-lg text-lg focus:bg-white focus:border-indigo-500 outline-none transition"></div><div id="trip-type-container" class="hidden"><label class="block text-sm font-medium text-stone-700 mb-1">種別</label><div class="flex space-x-2"><button class="trip-type-btn flex-1 py-2 px-3 rounded-lg text-sm font-semibold" data-type="ホテル">ホテル</button><button class="trip-type-btn flex-1 py-2 px-3 rounded-lg text-sm font-semibold" data-type="交通費">交通費</button></div></div><div><button id="add-expense-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:shadow-lg transition-all text-lg mt-2">支出を追加</button></div></div></section>
             <section id="reimbursement-section" class="bg-emerald-50 p-6 rounded-2xl shadow-lg"><h2 class="text-xl font-bold mb-4 text-emerald-800">出張費振込を記録する</h2><div class="space-y-4"><div><label for="reimbursement-amount" class="block text-sm font-medium text-stone-700 mb-1">振込額 (円)</label><input type="number" id="reimbursement-amount" placeholder="例: 50000" class="w-full p-3 bg-white border-2 border-emerald-200 rounded-lg text-lg focus:border-emerald-500 outline-none transition"></div><div><label for="reimbursement-memo-select" class="block text-sm font-medium text-stone-700 mb-1">メモ（宛先）</label><select id="reimbursement-memo-select" class="w-full p-3 bg-white border-2 border-emerald-200 rounded-lg text-lg focus:border-emerald-500 outline-none transition"><option value="">精算する出張を選択...</option></select></div><div class="pt-2"><button id="add-reimbursement-btn" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:shadow-lg transition-all text-lg">振込を記録</button></div></div></section>
         </div>
 
@@ -79,6 +89,7 @@
             let mainFilter = 'month';
             let tripTotalFilter = 'all';
             let selectedTripType = '';
+            let selectedFixedCostCategory = '';
 
             const mainContent = document.getElementById('main-content');
             const detailsPage = document.getElementById('details-page');
@@ -93,6 +104,9 @@
             const tripDateContainer = document.getElementById('trip-date-container');
             const tripDateInput = document.getElementById('trip-date');
             const tripTypeContainer = document.getElementById('trip-type-container');
+            const fixedCostContainer = document.getElementById('fixed-cost-container');
+            const fixedCostMemoContainer = document.getElementById('fixed-cost-memo-container');
+            const fixedCostMemoInput = document.getElementById('fixed-cost-memo');
             const addBtn = document.getElementById('add-expense-btn');
             const reimbursementAmountInput = document.getElementById('reimbursement-amount');
             const reimbursementMemoSelect = document.getElementById('reimbursement-memo-select');
@@ -120,7 +134,7 @@
             const tripTotalFilterTabs = document.getElementById('trip-total-filter-tabs');
             const tripHistoryTotalEl = document.getElementById('trip-history-total');
 
-            const categoryColors = { '食費': '#3b82f6', '日用品': '#22c55e', 'コンビニ': '#f59e0b', '交通費': '#8b5cf6', '交際費': '#ec4899', '病院': '#ef4444', '出張中の費用': '#14b8a6', '出張費': '#dc2626', 'ネットショッピング（日用品）': '#2d3748', 'ネットショッピング（娯楽）': '#a0aec0', '出張費振込': '#16a34a', 'その他': '#6b7280' };
+            const categoryColors = { '食費': '#3b82f6', '日用品': '#22c55e', 'コンビニ': '#f59e0b', '交通費': '#8b5cf6', '交際費': '#ec4899', '病院': '#ef4444', '通信費': '#06b6d4', '光熱費': '#f97316', '水道費': '#3b82f6', 'ガス代': '#f59e0b', '保育園関連': '#ec4899', 'その他（固定費）': '#64748b', '出張中の費用': '#14b8a6', '出張費': '#dc2626', 'ネットショッピング（日用品）': '#2d3748', 'ネットショッピング（娯楽）': '#a0aec0', '出張費振込': '#16a34a', 'その他': '#6b7280' };
             
             const showMessage = (message, type = 'success') => {
                 messageBox.textContent = message;
@@ -181,12 +195,23 @@
             };
 
             addBtn.addEventListener('click', () => { 
-                const category = categorySelect.value;
+                const mainCategory = categorySelect.value;
                 const amount = parseInt(amountInput.value);
+                let finalCategory = mainCategory;
                 let finalMemo = '';
-                if (category === 'その他') {
+
+                if (mainCategory === '固定費') {
+                    if (!selectedFixedCostCategory) {
+                        showMessage('固定費の内訳を選択してください。', 'error');
+                        return;
+                    }
+                    finalCategory = selectedFixedCostCategory;
+                    if (finalCategory === 'その他（固定費）') {
+                        finalMemo = fixedCostMemoInput.value;
+                    }
+                } else if (mainCategory === 'その他') {
                     finalMemo = memoInput.value;
-                } else if (category === '出張費' || category === '出張中の費用') {
+                } else if (mainCategory === '出張費' || mainCategory === '出張中の費用') {
                     if (!selectedTripType) {
                         showMessage('種別（ホテル/交通費）を選択してください。', 'error');
                         return;
@@ -194,13 +219,18 @@
                     const tripDate = tripDateInput.value ? dayjs(tripDateInput.value).format('YYYYMMDD') : dayjs().format('YYYYMMDD');
                     finalMemo = `${memoInput.value}_${selectedTripType}_${tripDate}`;
                 }
-                addTransaction(category, amount, finalMemo);
+
+                addTransaction(finalCategory, amount, finalMemo);
+                
                 amountInput.value = '';
                 memoInput.value = '';
                 tripDateInput.value = '';
+                fixedCostMemoInput.value = '';
                 selectedTripType = '';
-                document.querySelectorAll('.trip-type-btn').forEach(btn => btn.classList.remove('active'));
+                selectedFixedCostCategory = '';
+                document.querySelectorAll('.trip-type-btn, .fixed-cost-btn').forEach(btn => btn.classList.remove('active'));
             });
+
             addReimbursementBtn.addEventListener('click', () => { 
                 const amount = parseInt(reimbursementAmountInput.value);
                 const memo = reimbursementMemoSelect.value;
@@ -217,9 +247,12 @@
                 const value = e.target.value;
                 const isTripExpense = value === '出張費' || value === '出張中の費用';
                 const isOther = value === 'その他';
+                const isFixedCost = value === '固定費';
+
                 memoContainer.classList.toggle('hidden', !isTripExpense && !isOther);
                 tripDateContainer.classList.toggle('hidden', !isTripExpense);
                 tripTypeContainer.classList.toggle('hidden', !isTripExpense);
+                fixedCostContainer.classList.toggle('hidden', !isFixedCost);
             });
 
             tripTypeContainer.addEventListener('click', (e) => {
@@ -227,6 +260,15 @@
                     document.querySelectorAll('.trip-type-btn').forEach(btn => btn.classList.remove('active'));
                     e.target.classList.add('active');
                     selectedTripType = e.target.dataset.type;
+                }
+            });
+
+            fixedCostContainer.addEventListener('click', (e) => {
+                if(e.target.classList.contains('fixed-cost-btn')) {
+                    document.querySelectorAll('.fixed-cost-btn').forEach(btn => btn.classList.remove('active'));
+                    e.target.classList.add('active');
+                    selectedFixedCostCategory = e.target.dataset.category;
+                    fixedCostMemoContainer.classList.toggle('hidden', selectedFixedCostCategory !== 'その他（固定費）');
                 }
             });
 
