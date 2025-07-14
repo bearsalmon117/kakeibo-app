@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>家計簿ダッシュボード</title>
+    <meta name="theme-color" content="#4f46e5"/>
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icons/icon-192x192.png">
+    <!-- Chosen Palette: Warm Neutrals with Soft Accents -->
+    <!-- Application Structure Plan: The app now features a two-page layout managed by showing/hiding divs. The main page contains the dashboard, and a new "Details" page shows a breakdown of trip expenses by destination (memo). A memo field has been added to the reimbursement form. -->
+    <!-- Visualization & Content Choices: Added helper buttons for trip expense type ("Hotel", "Transport"). The memo format is now composite, including this type. The details page logic is updated to parse this new format correctly. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/dayjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/plugin/isoWeek.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/plugin/customParseFormat.js"></script>
+    <style>
+        body { font-family: 'Inter', 'Noto Sans JP', sans-serif; background-color: #f5f5f4; }
+        .chart-container { position: relative; width: 100%; max-width: 280px; margin-left: auto; margin-right: auto; height: 280px; max-height: 40vh; }
+        @media (min-width: 1024px) { .chart-container { max-width: 240px; height: 240px; } }
+        .tab-btn, .trip-type-btn { transition: all 0.2s ease-in-out; }
+        .tab-btn.active, .trip-type-btn.active { background-color: #4f46e5; color: white; }
+        .tab-btn:not(.active), .trip-type-btn:not(.active) { background-color: #e5e7eb; color: #374151; }
+        .saving-indicator { display: none; }
+        .saving-indicator.saving { display: inline-block; animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="text-stone-800">
+
+    <div id="main-content" class="container mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
+
+        <header class="text-center mb-8"><h1 class="text-3xl sm:text-4xl font-bold text-indigo-700">家計簿ダッシュボード</h1><p class="mt-2 text-stone-600">日々の支出を記録し、スプレッドシートに自動保存しましょう。</p></header>
+        
+        <section class="mb-8 bg-indigo-50 p-6 rounded-2xl shadow-md"><h2 class="text-xl font-bold mb-3 text-indigo-800">Googleスプレッドシート連携</h2><div class="space-y-4"><div><label for="apps-script-url" class="block text-sm font-medium text-gray-700 mb-1">ウェブアプリURL</label><input type="url" id="apps-script-url" placeholder="Apps ScriptのウェブアプリURLを貼り付け" class="w-full px-4 py-2 bg-white border border-indigo-200 rounded-lg focus:border-indigo-500 focus:ring-indigo-500 outline-none transition"></div><div><label for="spreadsheet-url" class="block text-sm font-medium text-gray-700 mb-1">スプレッドシートURL（任意）</label><input type="url" id="spreadsheet-url" placeholder="確認したいスプレッドシートのURLを貼り付け" class="w-full px-4 py-2 bg-white border border-indigo-200 rounded-lg focus:border-indigo-500 focus:ring-indigo-500 outline-none transition"></div><div class="flex flex-col sm:flex-row items-center gap-3"><button id="save-settings-btn" class="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-lg transition-all flex-shrink-0">設定を保存＆再読込</button><a id="view-sheet-btn" href="#" target="_blank" rel="noopener noreferrer" class="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition-all flex-shrink-0 text-center hidden">シートを開く</a></div></div></section>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <section id="input-section" class="bg-white p-6 rounded-2xl shadow-lg"><h2 class="text-xl font-bold mb-4">支出を記録する</h2><div class="space-y-4"><div><label for="amount" class="block text-sm font-medium text-stone-700 mb-1">金額 (円)</label><input type="number" id="amount" placeholder="例: 1500" class="w-full p-3 bg-stone-100 border-2 border-transparent rounded-lg text-lg focus:bg-white focus:border-indigo-500 outline-none transition"></div><div><label for="category" class="block text-sm font-medium text-stone-700 mb-1">カテゴリー</label><select id="category" class="w-full p-3 bg-stone-100 border-2 border-transparent rounded-lg text-lg focus:bg-white focus:border-indigo-500 outline-none transition"><option>食費</option> <option>日用品</option> <option>コンビニ</option> <option>交通費</option> <option>交際費</option><option>病院</option> <option>出張中の費用</option> <option>出張費</option> <option>ネットショッピング（日用品）</option> <option>ネットショッピング（娯楽）</option> <option>その他</option></select></div><div id="trip-date-container" class="hidden"><label for="trip-date" class="block text-sm font-medium text-stone-700 mb-1">出張日</label><input type="date" id="trip-date" class="w-full p-3 bg-stone-100 border-2 border-transparent rounded-lg text-lg focus:bg-white focus:border-indigo-500 outline-none transition"></div><div id="memo-container" class="hidden"> <label for="memo" class="block text-sm font-medium text-stone-700 mb-1">メモ</label> <input type="text" id="memo" placeholder="内容を入力" class="w-full p-3 bg-stone-100 border-2 border-transparent rounded-lg text-lg focus:bg-white focus:border-indigo-500 outline-none transition"></div><div id="trip-type-container" class="hidden"><label class="block text-sm font-medium text-stone-700 mb-1">種別</label><div class="flex space-x-2"><button class="trip-type-btn flex-1 py-2 px-3 rounded-lg text-sm font-semibold" data-type="ホテル">ホテル</button><button class="trip-type-btn flex-1 py-2 px-3 rounded-lg text-sm font-semibold" data-type="交通費">交通費</button></div></div><div><button id="add-expense-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:shadow-lg transition-all text-lg mt-2">支出を追加</button></div></div></section>
+            <section id="reimbursement-section" class="bg-emerald-50 p-6 rounded-2xl shadow-lg"><h2 class="text-xl font-bold mb-4 text-emerald-800">出張費振込を記録する</h2><div class="space-y-4"><div><label for="reimbursement-amount" class="block text-sm font-medium text-stone-700 mb-1">振込額 (円)</label><input type="number" id="reimbursement-amount" placeholder="例: 50000" class="w-full p-3 bg-white border-2 border-emerald-200 rounded-lg text-lg focus:border-emerald-500 outline-none transition"></div><div><label for="reimbursement-memo-select" class="block text-sm font-medium text-stone-700 mb-1">メモ（宛先）</label><select id="reimbursement-memo-select" class="w-full p-3 bg-white border-2 border-emerald-200 rounded-lg text-lg focus:border-emerald-500 outline-none transition"><option value="">精算する出張を選択...</option></select></div><div class="pt-2"><button id="add-reimbursement-btn" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:shadow-lg transition-all text-lg">振込を記録</button></div></div></section>
+        </div>
+
+        <section id="dashboard-section">
+            <div class="flex justify-center mb-6"><div id="filter-tabs" class="flex space-x-1 p-1 bg-stone-200 rounded-xl"><button class="tab-btn py-2 px-5 rounded-lg font-semibold" data-filter="week">今週</button><button class="tab-btn py-2 px-5 rounded-lg font-semibold active" data-filter="month">今月</button><button class="tab-btn py-2 px-5 rounded-lg font-semibold" data-filter="all">全期間</button></div></div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                <div class="bg-white p-6 rounded-2xl shadow-lg"><h3 class="text-xl font-bold mb-4 text-center">支出カテゴリー</h3><div class="flex flex-col lg:flex-row items-center gap-4"><div class="chart-container flex-shrink-0"><canvas id="category-chart"></canvas></div><div class="w-full flex-grow flex flex-col"><div id="category-list" class="flex-grow max-h-52 overflow-y-auto"></div><div id="category-total" class="pt-2 mt-2 border-t border-stone-200"></div></div></div></div>
+                <div class="bg-white p-6 rounded-2xl shadow-lg flex flex-col"><h3 class="text-xl font-bold mb-4 text-center">出張費精算</h3><div id="trip-balance-display" class="flex-grow flex flex-col justify-center items-center p-4 space-y-4"><div class="text-center w-full"><p class="text-sm text-stone-500">振込合計</p><p id="reimbursement-total" class="text-2xl font-bold text-green-600">¥0</p></div><div class="text-center w-full"><p class="text-sm text-stone-500">経費合計</p><p id="trip-expense-total" class="text-2xl font-bold text-red-600">¥0</p></div><hr class="w-3/4 my-4"><div class="text-center w-full"><p class="text-lg font-bold text-stone-700">差引残高</p><p id="net-balance" class="text-4xl font-extrabold">¥0</p></div></div><div class="pt-4 border-t text-center"><button id="show-details-btn" class="text-indigo-600 hover:text-indigo-800 font-semibold">詳細を見る →</button></div></div>
+            </div>
+        </section>
+
+        <section id="trip-history-section" class="bg-white p-6 rounded-2xl shadow-lg mb-8">
+            <h2 class="text-xl font-bold mb-4">出張費 取引履歴</h2>
+            <div class="max-h-60 overflow-y-auto mb-4"><table class="w-full text-left"><thead class="sticky top-0 bg-white"><tr><th class="p-3 text-sm font-semibold text-stone-600 border-b-2">日付</th><th class="p-3 text-sm font-semibold text-stone-600 border-b-2">カテゴリー</th><th class="p-3 text-sm font-semibold text-stone-600 border-b-2">メモ</th><th class="p-3 text-sm font-semibold text-stone-600 border-b-2 text-right">金額</th></tr></thead><tbody id="trip-history-body"></tbody></table></div>
+            <div class="flex items-center justify-end gap-4 pt-4 border-t"><div id="trip-total-filter-tabs" class="flex space-x-1 p-1 bg-stone-200 rounded-xl"><button class="tab-btn py-1 px-3 rounded-lg text-sm font-semibold" data-filter="month">今月</button><button class="tab-btn py-1 px-3 rounded-lg text-sm font-semibold active" data-filter="all">総額</button></div><div><p class="text-sm text-stone-600">合計金額</p><p id="trip-history-total" class="text-2xl font-bold text-red-600 text-right">¥0</p></div></div>
+        </section>
+
+        <section id="history-section" class="bg-white p-6 rounded-2xl shadow-lg">
+            <div class="flex justify-between items-center mb-4"><h2 class="text-xl font-bold">全取引履歴 (最新5件)</h2><div class="saving-indicator w-5 h-5 border-2 border-stone-400 border-t-transparent rounded-full"></div></div>
+            <div class="max-h-96 overflow-y-auto"><table class="w-full text-left"><thead class="sticky top-0 bg-white"><tr><th class="p-3 text-sm font-semibold text-stone-600 border-b-2">日付</th><th class="p-3 text-sm font-semibold text-stone-600 border-b-2">カテゴリー</th><th class="p-3 text-sm font-semibold text-stone-600 border-b-2 text-right">金額</th></tr></thead><tbody id="log-body"></tbody></table></div>
+        </section>
+    </div>
+
+    <div id="details-page" class="hidden fixed inset-0 bg-stone-100 z-50 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+        <header class="flex justify-between items-center mb-8">
+            <h1 class="text-3xl sm:text-4xl font-bold text-indigo-700">出張費精算 詳細</h1>
+            <button id="back-to-main-btn" class="text-indigo-600 hover:text-indigo-800 font-semibold">← ダッシュボードに戻る</button>
+        </header>
+        <div id="details-container" class="space-y-6"></div>
+    </div>
+    
+    <div id="message-box" class="fixed bottom-5 right-5 p-4 rounded-lg text-white shadow-xl transition-opacity duration-300 opacity-0" style="z-index: 1000;"></div>
+
+    <script>
+        dayjs.extend(window.dayjs_plugin_isoWeek);
+        dayjs.extend(window.dayjs_plugin_customParseFormat);
+        document.addEventListener('DOMContentLoaded', () => {
+            let sheetData = [];
+            let mainFilter = 'month';
+            let tripTotalFilter = 'all';
+            let selectedTripType = '';
+
+            const mainContent = document.getElementById('main-content');
+            const detailsPage = document.getElementById('details-page');
+            const showDetailsBtn = document.getElementById('show-details-btn');
+            const backToMainBtn = document.getElementById('back-to-main-btn');
+            const detailsContainer = document.getElementById('details-container');
+
+            const amountInput = document.getElementById('amount');
+            const categorySelect = document.getElementById('category');
+            const memoContainer = document.getElementById('memo-container');
+            const memoInput = document.getElementById('memo');
+            const tripDateContainer = document.getElementById('trip-date-container');
+            const tripDateInput = document.getElementById('trip-date');
+            const tripTypeContainer = document.getElementById('trip-type-container');
+            const addBtn = document.getElementById('add-expense-btn');
+            const reimbursementAmountInput = document.getElementById('reimbursement-amount');
+            const reimbursementMemoSelect = document.getElementById('reimbursement-memo-select');
+            const addReimbursementBtn = document.getElementById('add-reimbursement-btn');
+
+            const logBody = document.getElementById('log-body');
+            const filterTabs = document.getElementById('filter-tabs');
+            const messageBox = document.getElementById('message-box');
+            const appsScriptUrlInput = document.getElementById('apps-script-url');
+            const spreadsheetUrlInput = document.getElementById('spreadsheet-url');
+            const saveSettingsBtn = document.getElementById('save-settings-btn');
+            const viewSheetBtn = document.getElementById('view-sheet-btn');
+            const savingIndicator = document.querySelector('.saving-indicator');
+
+            const categoryChartCtx = document.getElementById('category-chart').getContext('2d');
+            const categoryListEl = document.getElementById('category-list');
+            const categoryTotalEl = document.getElementById('category-total');
+            let categoryChartInstance;
+            
+            const reimbursementTotalEl = document.getElementById('reimbursement-total');
+            const tripExpenseTotalEl = document.getElementById('trip-expense-total');
+            const netBalanceEl = document.getElementById('net-balance');
+
+            const tripHistoryBody = document.getElementById('trip-history-body');
+            const tripTotalFilterTabs = document.getElementById('trip-total-filter-tabs');
+            const tripHistoryTotalEl = document.getElementById('trip-history-total');
+
+            const categoryColors = { '食費': '#3b82f6', '日用品': '#22c55e', 'コンビニ': '#f59e0b', '交通費': '#8b5cf6', '交際費': '#ec4899', '病院': '#ef4444', '出張中の費用': '#14b8a6', '出張費': '#dc2626', 'ネットショッピング（日用品）': '#2d3748', 'ネットショッピング（娯楽）': '#a0aec0', '出張費振込': '#16a34a', 'その他': '#6b7280' };
+            
+            const showMessage = (message, type = 'success') => {
+                messageBox.textContent = message;
+                messageBox.className = `fixed bottom-5 right-5 p-4 rounded-lg text-white shadow-xl transition-all duration-500 transform translate-y-4 opacity-0 ${type === 'success' ? 'bg-green-500' : 'bg-red-500'}`;
+                setTimeout(() => { messageBox.classList.remove('translate-y-4', 'opacity-0'); }, 10);
+                setTimeout(() => { messageBox.classList.add('translate-y-4', 'opacity-0'); }, 3000);
+            };
+
+            const renderAllComponents = () => {
+                const filteredTransactions = getFilteredTransactions();
+                renderMainTable(sheetData); 
+                renderBusinessTripBalance(filteredTransactions);
+                const expenseOnlyData = filteredTransactions.filter(d => d.category !== '出張費振込' && d.category !== '出張費' && d.category !== '出張中の費用');
+                renderCategoryChart(expenseOnlyData);
+                renderTripHistorySection();
+                updateReimbursementDropdown();
+            };
+
+            const fetchDataFromSheet = async () => {
+                const url = appsScriptUrlInput.value;
+                if (!url) { showMessage('ウェブアプリURLが設定されていません。', 'error'); return; }
+                
+                savingIndicator.classList.add('saving');
+                logBody.innerHTML = `<tr><td colspan="3" class="text-center p-8 text-stone-500">...</td></tr>`;
+                tripHistoryBody.innerHTML = `<tr><td colspan="4" class="text-center p-8 text-stone-500">...</td></tr>`;
+                try {
+                    const response = await fetch(url);
+                    if (!response.ok) throw new Error(`Network response was not ok`);
+                    const data = await response.json();
+                    sheetData = data;
+                    renderAllComponents();
+                } catch (error) {
+                    console.error('Failed to fetch data:', error);
+                    showMessage('データの読込に失敗しました。', 'error');
+                } finally {
+                    savingIndicator.classList.remove('saving');
+                }
+            };
+            
+            const addTransaction = async (category, amount, memo = '') => {
+                const appsScriptUrl = appsScriptUrlInput.value;
+                if (!appsScriptUrl) { showMessage('先に有効なウェブアプリのURLを設定・保存してください。', 'error'); return; }
+                if (!amount || amount <= 0) { showMessage('有効な金額を入力してください。', 'error'); return; }
+
+                const newTransaction = { date: new Date().toISOString(), category, amount, memo };
+                
+                savingIndicator.classList.add('saving');
+                try {
+                    await fetch(appsScriptUrl, { method: 'POST', mode: 'no-cors', body: JSON.stringify(newTransaction) });
+                    showMessage(`「${category}」を保存しました。`);
+                    await fetchDataFromSheet(); 
+                } catch (error) {
+                    console.error('Sheet Error:', error);
+                    showMessage('保存に失敗しました。', 'error');
+                } finally {
+                    savingIndicator.classList.remove('saving');
+                }
+            };
+
+            addBtn.addEventListener('click', () => { 
+                const category = categorySelect.value;
+                const amount = parseInt(amountInput.value);
+                let finalMemo = '';
+                if (category === 'その他') {
+                    finalMemo = memoInput.value;
+                } else if (category === '出張費' || category === '出張中の費用') {
+                    if (!selectedTripType) {
+                        showMessage('種別（ホテル/交通費）を選択してください。', 'error');
+                        return;
+                    }
+                    const tripDate = tripDateInput.value ? dayjs(tripDateInput.value).format('YYYYMMDD') : dayjs().format('YYYYMMDD');
+                    finalMemo = `${memoInput.value}_${selectedTripType}_${tripDate}`;
+                }
+                addTransaction(category, amount, finalMemo);
+                amountInput.value = '';
+                memoInput.value = '';
+                tripDateInput.value = '';
+                selectedTripType = '';
+                document.querySelectorAll('.trip-type-btn').forEach(btn => btn.classList.remove('active'));
+            });
+            addReimbursementBtn.addEventListener('click', () => { 
+                const amount = parseInt(reimbursementAmountInput.value);
+                const memo = reimbursementMemoSelect.value;
+                if (!memo) {
+                    showMessage('精算する出張を選択してください。', 'error');
+                    return;
+                }
+                addTransaction('出張費振込', amount, memo); 
+                reimbursementAmountInput.value = '';
+                reimbursementMemoSelect.value = '';
+            });
+            
+            categorySelect.addEventListener('change', (e) => {
+                const value = e.target.value;
+                const isTripExpense = value === '出張費' || value === '出張中の費用';
+                const isOther = value === 'その他';
+                memoContainer.classList.toggle('hidden', !isTripExpense && !isOther);
+                tripDateContainer.classList.toggle('hidden', !isTripExpense);
+                tripTypeContainer.classList.toggle('hidden', !isTripExpense);
+            });
+
+            tripTypeContainer.addEventListener('click', (e) => {
+                if(e.target.classList.contains('trip-type-btn')) {
+                    document.querySelectorAll('.trip-type-btn').forEach(btn => btn.classList.remove('active'));
+                    e.target.classList.add('active');
+                    selectedTripType = e.target.dataset.type;
+                }
+            });
+
+            const getFilteredTransactions = () => {
+                const now = dayjs();
+                return sheetData.filter(e => {
+                    if (!e || !e.date) return false;
+                    const expenseDate = dayjs(e.date);
+                    if (mainFilter === 'week') return expenseDate.isSame(now, 'isoWeek');
+                    if (mainFilter === 'month') return expenseDate.isSame(now, 'month');
+                    return true;
+                });
+            };
+            
+            const renderBusinessTripBalance = (data) => {
+                const reimbursement = data.filter(d => d.category === '出張費振込').reduce((sum, d) => sum + d.amount, 0);
+                const tripExpenses = data.filter(d => d.category === '出張費' || d.category === '出張中の費用').reduce((sum, d) => sum + d.amount, 0);
+                const balance = reimbursement - tripExpenses;
+                reimbursementTotalEl.textContent = `+¥${reimbursement.toLocaleString()}`;
+                tripExpenseTotalEl.textContent = `-¥${tripExpenses.toLocaleString()}`;
+                netBalanceEl.textContent = `${balance >= 0 ? '+' : '-'}¥${Math.abs(balance).toLocaleString()}`;
+                netBalanceEl.classList.remove('text-green-600', 'text-red-600', 'text-stone-800');
+                if (balance > 0) netBalanceEl.classList.add('text-green-600');
+                else if (balance < 0) netBalanceEl.classList.add('text-red-600');
+                else netBalanceEl.classList.add('text-stone-800');
+            };
+
+            const renderMainTable = (data) => {
+                const sortedData = [...data].sort((a, b) => new Date(b.date) - new Date(a.date));
+                const recentData = sortedData.slice(0, 5);
+                logBody.innerHTML = recentData.length === 0 ? `<tr><td colspan="3" class="text-center p-8 text-stone-500">記録がありません。</td></tr>` : recentData.map(t => `
+                    <tr class="border-b border-stone-200 hover:bg-stone-50">
+                        <td class="p-3">${dayjs(t.date).format('YYYY/MM/DD')}</td>
+                        <td class="p-3"><span class="px-2 py-1 rounded text-xs font-semibold" style="background-color:${categoryColors[t.category]||'#6b7280'}33; color:${categoryColors[t.category]||'#6b7280'}">${t.category}</span></td>
+                        <td class="p-3 text-right font-mono">${t.category === '出張費振込' ? '+' : ''}${t.amount.toLocaleString()}円</td>
+                    </tr>`).join('');
+            };
+
+            const renderCategoryChart = (data) => {
+                const categoryTotals = data.reduce((acc, curr) => ({...acc, [curr.category]: (acc[curr.category] || 0) + curr.amount}), {});
+                if (categoryChartInstance) categoryChartInstance.destroy();
+                categoryChartInstance = new Chart(categoryChartCtx, { type: 'doughnut', data: { labels: Object.keys(categoryTotals), datasets: [{ data: Object.values(categoryTotals), backgroundColor: Object.keys(categoryTotals).map(label => categoryColors[label] || '#6b7280'), borderColor: '#f5f5f4', borderWidth: 2, }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${c.label}: ${c.raw.toLocaleString()}円` } } }, cutout: '60%' } });
+                
+                categoryListEl.innerHTML = '';
+                categoryTotalEl.innerHTML = '';
+                const sortedCategories = Object.entries(categoryTotals).sort((a, b) => b[1] - a[1]);
+                const totalAmount = sortedCategories.reduce((sum, [, amount]) => sum + amount, 0);
+                const legendList = document.createElement('ul');
+                legendList.className = 'space-y-2 w-full';
+                sortedCategories.forEach(([name, amount]) => {
+                    const li = document.createElement('li');
+                    li.className = 'flex justify-between items-center text-sm';
+                    li.innerHTML = `<div class="flex items-center"><span class="w-3 h-3 rounded-full mr-2" style="background-color: ${categoryColors[name] || '#6b7280'}"></span><span>${name}</span></div><span class="font-semibold">${amount.toLocaleString()}円</span>`;
+                    legendList.appendChild(li);
+                });
+                categoryListEl.appendChild(legendList);
+                const totalDiv = document.createElement('div');
+                totalDiv.className = 'flex justify-between items-center text-base font-bold';
+                totalDiv.innerHTML = `<span>総額</span><span>${totalAmount.toLocaleString()}円</span>`;
+                categoryTotalEl.appendChild(totalDiv);
+            };
+
+            const renderTripHistorySection = () => {
+                const tripData = sheetData.filter(d => d.category === '出張費' || d.category === '出張中の費用').sort((a, b) => new Date(b.date) - new Date(a.date));
+                const recentTripData = tripData.slice(0, 5);
+                tripHistoryBody.innerHTML = recentTripData.length === 0 ? `<tr><td colspan="4" class="text-center p-8 text-stone-500">出張費の記録がありません。</td></tr>` : recentTripData.map(t => `
+                    <tr class="border-b border-stone-200 hover:bg-stone-50">
+                        <td class="p-3">${dayjs(t.date).format('YYYY/MM/DD')}</td>
+                        <td class="p-3"><span class="px-2 py-1 rounded text-xs font-semibold" style="background-color:${categoryColors[t.category]}33; color:${categoryColors[t.category]}">${t.category}</span></td>
+                        <td class="p-3 text-sm text-stone-600 truncate" title="${t.memo || ''}">${t.memo || '-'}</td>
+                        <td class="p-3 text-right font-mono">${t.amount.toLocaleString()}円</td>
+                    </tr>`).join('');
+                renderTripHistoryTotal();
+            };
+            
+            const renderTripHistoryTotal = () => {
+                let dataToTotal = sheetData.filter(d => d.category === '出張費' || d.category === '出張中の費用');
+                if (tripTotalFilter === 'month') {
+                    const now = dayjs();
+                    dataToTotal = dataToTotal.filter(d => dayjs(d.date).isSame(now, 'month'));
+                }
+                const totalAmount = dataToTotal.reduce((sum, d) => sum + d.amount, 0);
+                tripHistoryTotalEl.textContent = `¥${totalAmount.toLocaleString()}`;
+            };
+
+            const renderDetailsPage = () => {
+                const destinations = {};
+                sheetData.forEach(t => {
+                    if (!t.memo) return;
+                    const destName = t.memo.split('_')[0];
+                    if (!destName) return;
+
+                    if (!destinations[destName]) {
+                        destinations[destName] = { reimbursements: 0, expenses: 0 };
+                    }
+                    if (t.category === '出張費振込') {
+                        destinations[destName].reimbursements += t.amount;
+                    } else if (t.category === '出張費' || t.category === '出張中の費用') {
+                        destinations[destName].expenses += t.amount;
+                    }
+                });
+
+                detailsContainer.innerHTML = '';
+                const relevantDestinations = Object.entries(destinations).filter(([,data]) => data.expenses > 0 || data.reimbursements > 0);
+
+                if (relevantDestinations.length === 0) {
+                    detailsContainer.innerHTML = `<p class="text-center text-stone-500">メモ付きの出張関連の取引がありません。</p>`;
+                    return;
+                }
+
+                for (const [dest, data] of relevantDestinations) {
+                    const balance = data.reimbursements - data.expenses;
+                    const balanceColor = balance > 0 ? 'text-green-600' : balance < 0 ? 'text-red-600' : 'text-stone-800';
+                    
+                    const tripExpenses = sheetData.filter(t => (t.category === '出張費' || t.category === '出張中の費用') && t.memo && t.memo.startsWith(dest));
+                    const tripDates = new Set(tripExpenses.map(t => t.memo.split('_')[2]).filter(Boolean));
+                    const formattedDates = [...tripDates].map(d => dayjs(d, 'YYYYMMDD').format('YYYY/MM/DD')).join(', ');
+
+                    const card = document.createElement('div');
+                    card.className = 'bg-white p-6 rounded-xl shadow-md';
+                    
+                    card.innerHTML = `
+                        <div class="mb-4">
+                            <h3 class="text-xl font-bold">${dest}</h3>
+                            <p class="text-sm text-stone-500">${formattedDates}</p>
+                        </div>
+                        <div class="pt-4 border-t-2 border-stone-200">
+                            <div class="flex justify-between items-center mb-2"><span class="text-stone-600">振込合計:</span><span class="font-semibold text-green-600">+¥${data.reimbursements.toLocaleString()}</span></div>
+                            <div class="flex justify-between items-center mb-4"><span class="text-stone-600">経費合計:</span><span class="font-semibold text-red-600">-¥${data.expenses.toLocaleString()}</span></div>
+                            <div class="flex justify-between items-center pt-4 border-t"><span class="text-lg font-bold">差引残高:</span><span class="text-2xl font-bold ${balanceColor}">${balance >= 0 ? '+' : '-'}¥${Math.abs(balance).toLocaleString()}</span></div>
+                        </div>
+                    `;
+                    detailsContainer.appendChild(card);
+                }
+            };
+
+            const updateReimbursementDropdown = () => {
+                const tripBalances = {};
+                const startDate = dayjs('2025-07-01');
+                const relevantData = sheetData.filter(t => dayjs(t.date).isAfter(startDate.subtract(1, 'day')));
+
+                relevantData.forEach(t => {
+                    if (!t.memo) return;
+                    const destName = t.memo.split('_')[0];
+                    if (!destName) return;
+
+                    if (!tripBalances[destName]) {
+                        tripBalances[destName] = { expenses: 0, reimbursed: 0 };
+                    }
+                    if (t.category === '出張費' || t.category === '出張中の費用') {
+                        tripBalances[destName].expenses += t.amount;
+                    } else if (t.category === '出張費振込') {
+                        tripBalances[destName].reimbursed += t.amount;
+                    }
+                });
+
+                const unreimbursedTrips = Object.keys(tripBalances).filter(dest => tripBalances[dest].expenses > tripBalances[dest].reimbursed);
+                
+                reimbursementMemoSelect.innerHTML = '<option value="">精算する出張を選択...</option>';
+                unreimbursedTrips.forEach(dest => {
+                    const option = document.createElement('option');
+                    option.value = dest;
+                    option.textContent = dest;
+                    reimbursementMemoSelect.appendChild(option);
+                });
+            };
+
+            const initializeApp = () => {
+                appsScriptUrlInput.value = localStorage.getItem('appsScriptUrl') || '';
+                spreadsheetUrlInput.value = localStorage.getItem('spreadsheetUrl') || '';
+                updateSheetLinkVisibility();
+                fetchDataFromSheet();
+            };
+            
+            const updateSheetLinkVisibility = () => {
+                const url = spreadsheetUrlInput.value;
+                if (url && url.startsWith('http')) { viewSheetBtn.href = url; viewSheetBtn.classList.remove('hidden'); } 
+                else { viewSheetBtn.classList.add('hidden'); }
+            };
+            
+            filterTabs.addEventListener('click', (e) => { if (e.target.tagName === 'BUTTON') { mainFilter = e.target.dataset.filter; document.querySelectorAll('#filter-tabs .tab-btn').forEach(btn => btn.classList.remove('active')); e.target.classList.add('active'); renderAllComponents(); } });
+            tripTotalFilterTabs.addEventListener('click', (e) => { if (e.target.tagName === 'BUTTON') { tripTotalFilter = e.target.dataset.filter; document.querySelectorAll('#trip-total-filter-tabs .tab-btn').forEach(btn => btn.classList.remove('active')); e.target.classList.add('active'); renderTripHistoryTotal(); } });
+            saveSettingsBtn.addEventListener('click', () => { localStorage.setItem('appsScriptUrl', appsScriptUrlInput.value); localStorage.setItem('spreadsheetUrl', spreadsheetUrlInput.value); showMessage('設定を保存しました。'); updateSheetLinkVisibility(); fetchDataFromSheet(); });
+            showDetailsBtn.addEventListener('click', () => { renderDetailsPage(); mainContent.classList.add('hidden'); detailsPage.classList.remove('hidden'); });
+            backToMainBtn.addEventListener('click', () => { mainContent.classList.remove('hidden'); detailsPage.classList.add('hidden'); });
+
+            initializeApp();
+        });
+    </script>
+</body>
+</html>
