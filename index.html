@@ -6,7 +6,7 @@
     <title>対話型家計簿ダッシュボード (スプレッドシート連携版)</title>
     <!-- Chosen Palette: Warm Neutrals with Soft Accents -->
     <!-- Application Structure Plan: The app now features a two-page layout managed by showing/hiding divs. The main page contains the dashboard, and a new "Details" page shows a breakdown of trip expenses by destination (memo). A memo field has been added to the reimbursement form. -->
-    <!-- Visualization & Content Choices: The data submission logic for "出張中の費用" has been updated to record the main category in the category column and a composite memo (destination_date_subcategory) in the memo column, as requested. -->
+    <!-- Visualization & Content Choices: Fixed a critical bug in data handling. The client-side JavaScript now correctly expects a simple array of transactions from the GAS `doGet` function and passes it directly to rendering functions. The `doPost` logic is also simplified to send a clean transaction object, resolving the data mismatch issue. -->
     <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
@@ -26,11 +26,6 @@
     </style>
 </head>
 <body class="text-stone-800">
-
-    <div id="reminder-notification-banner" class="hidden fixed top-0 left-0 right-0 bg-yellow-400 text-yellow-900 p-3 text-center z-50 shadow-lg">
-        <span id="reminder-text"></span>
-        <button id="close-reminder-btn" class="absolute top-1/2 right-4 -translate-y-1/2 font-bold">✕</button>
-    </div>
 
     <div id="main-content" class="container mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
 
@@ -75,17 +70,6 @@
             </div>
         </section>
 
-        <section id="reminder-section" class="bg-white p-6 rounded-2xl shadow-lg mb-8">
-            <h2 class="text-xl font-bold mb-4">リマインダー設定</h2>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-4 p-4 border rounded-lg bg-stone-50">
-                <div class="md:col-span-2"><label for="reminder-name" class="block text-sm font-medium text-stone-700 mb-1">項目名</label><input type="text" id="reminder-name" placeholder="例: 光熱費" class="w-full p-2 bg-white border-2 border-stone-200 rounded-lg focus:border-indigo-500 outline-none transition"></div>
-                <div><label for="reminder-day" class="block text-sm font-medium text-stone-700 mb-1">毎月の日付</label><input type="number" id="reminder-day" min="1" max="31" placeholder="例: 25" class="w-full p-2 bg-white border-2 border-stone-200 rounded-lg focus:border-indigo-500 outline-none transition"></div>
-                <div class="md:col-span-3"><label for="reminder-email" class="block text-sm font-medium text-stone-700 mb-1">メールアドレス（将来用）</label><input type="email" id="reminder-email" placeholder="user@example.com" class="w-full p-2 bg-white border-2 border-stone-200 rounded-lg focus:border-indigo-500 outline-none transition"></div>
-                <div class="md:col-span-3"><button id="add-reminder-btn" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-all">リマインダーを追加</button></div>
-            </div>
-            <div id="reminder-list" class="space-y-2"></div>
-        </section>
-
         <section id="trip-history-section" class="bg-white p-6 rounded-2xl shadow-lg mb-8">
             <h2 class="text-xl font-bold mb-4">出張費 取引履歴</h2>
             <div class="max-h-60 overflow-y-auto mb-4"><table class="w-full text-left"><thead class="sticky top-0 bg-white"><tr><th class="p-3 text-sm font-semibold text-stone-600 border-b-2">日付</th><th class="p-3 text-sm font-semibold text-stone-600 border-b-2">カテゴリー</th><th class="p-3 text-sm font-semibold text-stone-600 border-b-2">メモ</th><th class="p-3 text-sm font-semibold text-stone-600 border-b-2 text-right">金額</th></tr></thead><tbody id="trip-history-body"></tbody></table></div>
@@ -112,16 +96,12 @@
         dayjs.extend(window.dayjs_plugin_isoWeek);
         dayjs.extend(window.dayjs_plugin_customParseFormat);
         document.addEventListener('DOMContentLoaded', () => {
-            let sheetData = { transactions: [], reminders: [] };
+            let sheetData = [];
             let mainFilter = 'month';
             let tripTotalFilter = 'all';
             let selectedTripType = '';
             let selectedFixedCostCategory = '';
             let selectedDuringTripCategory = '';
-
-            const reminderBanner = document.getElementById('reminder-notification-banner');
-            const reminderText = document.getElementById('reminder-text');
-            const closeReminderBtn = document.getElementById('close-reminder-btn');
             
             const mainContent = document.getElementById('main-content');
             const detailsPage = document.getElementById('details-page');
@@ -146,12 +126,6 @@
             const reimbursementAmountInput = document.getElementById('reimbursement-amount');
             const reimbursementMemoSelect = document.getElementById('reimbursement-memo-select');
             const addReimbursementBtn = document.getElementById('add-reimbursement-btn');
-
-            const reminderNameInput = document.getElementById('reminder-name');
-            const reminderDayInput = document.getElementById('reminder-day');
-            const reminderEmailInput = document.getElementById('reminder-email');
-            const addReminderBtn = document.getElementById('add-reminder-btn');
-            const reminderList = document.getElementById('reminder-list');
 
             const logBody = document.getElementById('log-body');
             const filterTabs = document.getElementById('filter-tabs');
@@ -186,19 +160,17 @@
 
             const renderAllComponents = () => {
                 const filteredTransactions = getFilteredTransactions();
-                renderMainTable(sheetData.transactions); 
+                renderMainTable(sheetData); 
                 renderBusinessTripBalance(filteredTransactions);
                 const expenseOnlyData = filteredTransactions.filter(d => d.category !== '出張費振込' && d.category !== '出張費' && d.category !== '出張中の費用');
                 renderCategoryChart(expenseOnlyData);
                 renderTripHistorySection();
                 updateReimbursementDropdown();
-                renderReminders();
-                checkReminders();
             };
 
             const fetchDataFromSheet = async () => {
                 const url = appsScriptUrlInput.value;
-                if (!url) { showMessage('ウェブアプリURLが設定されていません。', 'error'); return; }
+                if (!url) { return; }
                 
                 savingIndicator.classList.add('saving');
                 logBody.innerHTML = `<tr><td colspan="3" class="text-center p-8 text-stone-500">...</td></tr>`;
@@ -207,7 +179,7 @@
                     const response = await fetch(url);
                     if (!response.ok) throw new Error(`Network response was not ok`);
                     const data = await response.json();
-                    sheetData = data;
+                    sheetData = Array.isArray(data) ? data : [];
                     renderAllComponents();
                 } catch (error) {
                     console.error('Failed to fetch data:', error);
@@ -217,14 +189,17 @@
                 }
             };
             
-            const postDataToSheet = async (type, payload) => {
-                const url = appsScriptUrlInput.value;
-                if (!url) { showMessage('先に有効なウェブアプリのURLを設定・保存してください。', 'error'); return; }
+            const addTransaction = async (category, amount, memo = '') => {
+                const appsScriptUrl = appsScriptUrlInput.value;
+                if (!appsScriptUrl) { showMessage('先に有効なウェブアプリのURLを設定・保存してください。', 'error'); return; }
+                if (!amount || amount <= 0) { showMessage('有効な金額を入力してください。', 'error'); return; }
+
+                const newTransaction = { date: new Date().toISOString(), category, amount, memo };
                 
                 savingIndicator.classList.add('saving');
                 try {
-                    await fetch(url, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ type, ...payload }) });
-                    showMessage(`データを保存しました。`);
+                    await fetch(appsScriptUrl, { method: 'POST', mode: 'no-cors', body: JSON.stringify(newTransaction) });
+                    showMessage(`「${category}」を保存しました。`);
                     await fetchDataFromSheet(); 
                 } catch (error) {
                     console.error('Sheet Error:', error);
@@ -252,7 +227,7 @@
                     finalMemo = `${memoInput.value}_${selectedTripType}_${tripDate}`;
                 } else if (mainCategory === '出張中の費用') {
                     if (!selectedDuringTripCategory) { showMessage('出張中の費用の内訳を選択してください。', 'error'); return; }
-                    finalCategory = '出張中の費用'; // Keep main category
+                    finalCategory = '出張中の費用';
                     const subCategory = selectedDuringTripCategory;
                     const destination = memoInput.value;
                     const tripDate = tripDateInput.value ? dayjs(tripDateInput.value).format('YYYYMMDD') : dayjs().format('YYYYMMDD');
@@ -263,8 +238,7 @@
                     }
                 }
 
-                const transactionData = { date: new Date().toISOString(), category: finalCategory, amount, memo: finalMemo };
-                postDataToSheet('addTransaction', { data: transactionData });
+                addTransaction(finalCategory, amount, finalMemo);
                 
                 amountInput.value = '';
                 memoInput.value = '';
@@ -281,8 +255,7 @@
                 const amount = parseInt(reimbursementAmountInput.value);
                 const memo = reimbursementMemoSelect.value;
                 if (!memo) { showMessage('精算する出張を選択してください。', 'error'); return; }
-                const transactionData = { date: new Date().toISOString(), category: '出張費振込', amount, memo };
-                postDataToSheet('addTransaction', { data: transactionData }); 
+                addTransaction('出張費振込', amount, memo); 
                 reimbursementAmountInput.value = '';
                 reimbursementMemoSelect.value = '';
             });
@@ -329,7 +302,7 @@
 
             const getFilteredTransactions = () => {
                 const now = dayjs();
-                return (sheetData.transactions || []).filter(e => {
+                return (sheetData || []).filter(e => {
                     if (!e || !e.date) return false;
                     const expenseDate = dayjs(e.date);
                     if (mainFilter === 'week') return expenseDate.isSame(now, 'isoWeek');
@@ -387,7 +360,7 @@
             };
 
             const renderTripHistorySection = () => {
-                const tripData = (sheetData.transactions || []).filter(d => d.category === '出張費' || d.category === '出張中の費用').sort((a, b) => new Date(b.date) - new Date(a.date));
+                const tripData = (sheetData || []).filter(d => d.category === '出張費' || d.category === '出張中の費用').sort((a, b) => new Date(b.date) - new Date(a.date));
                 const recentTripData = tripData.slice(0, 5);
                 tripHistoryBody.innerHTML = recentTripData.length === 0 ? `<tr><td colspan="4" class="text-center p-8 text-stone-500">出張費の記録がありません。</td></tr>` : recentTripData.map(t => `
                     <tr class="border-b border-stone-200 hover:bg-stone-50">
@@ -400,7 +373,7 @@
             };
             
             const renderTripHistoryTotal = () => {
-                let dataToTotal = (sheetData.transactions || []).filter(d => d.category === '出張費' || d.category === '出張中の費用');
+                let dataToTotal = (sheetData || []).filter(d => d.category === '出張費' || d.category === '出張中の費用');
                 if (tripTotalFilter === 'month') {
                     const now = dayjs();
                     dataToTotal = dataToTotal.filter(d => dayjs(d.date).isSame(now, 'month'));
@@ -411,7 +384,7 @@
 
             const renderDetailsPage = () => {
                 const destinations = {};
-                (sheetData.transactions || []).forEach(t => {
+                (sheetData || []).forEach(t => {
                     if (!t.memo) return;
                     const destName = t.memo.split('_')[0];
                     if (!destName) return;
@@ -438,8 +411,8 @@
                     const balance = data.reimbursements - data.expenses;
                     const balanceColor = balance > 0 ? 'text-green-600' : balance < 0 ? 'text-red-600' : 'text-stone-800';
                     
-                    const tripExpenses = (sheetData.transactions || []).filter(t => (t.category === '出張費' || t.category === '出張中の費用') && t.memo && t.memo.startsWith(dest));
-                    const tripDates = new Set(tripExpenses.map(t => t.memo.split('_')[2]).filter(Boolean));
+                    const tripExpenses = (sheetData || []).filter(t => (t.category === '出張費' || t.category === '出張中の費用') && t.memo && t.memo.startsWith(dest));
+                    const tripDates = new Set(tripExpenses.map(t => t.memo.split('_')[2] || t.memo.split('_')[1]).filter(Boolean));
                     const formattedDates = [...tripDates].map(d => dayjs(d, 'YYYYMMDD').format('YYYY/MM/DD')).join(', ');
 
                     const card = document.createElement('div');
@@ -463,7 +436,7 @@
             const updateReimbursementDropdown = () => {
                 const tripBalances = {};
                 const startDate = dayjs('2025-07-01');
-                const relevantData = (sheetData.transactions || []).filter(t => dayjs(t.date).isAfter(startDate.subtract(1, 'day')));
+                const relevantData = (sheetData || []).filter(t => dayjs(t.date).isAfter(startDate.subtract(1, 'day')));
 
                 relevantData.forEach(t => {
                     if (!t.memo) return;
@@ -491,82 +464,6 @@
                 });
             };
             
-            const renderReminders = () => {
-                reminderList.innerHTML = '';
-                const reminders = sheetData.reminders || [];
-                if (reminders.length === 0) {
-                    reminderList.innerHTML = `<p class="text-center text-sm text-stone-500">登録されたリマインダーはありません。</p>`;
-                    return;
-                }
-                reminders.forEach(reminder => {
-                    const item = document.createElement('div');
-                    item.className = 'flex justify-between items-center p-2 bg-stone-100 rounded-lg';
-                    item.innerHTML = `
-                        <div>
-                            <span class="font-semibold">${reminder.name}</span>
-                            <span class="text-sm text-stone-600 ml-2">毎月${reminder.day}日</span>
-                        </div>
-                        <button data-id="${reminder.id}" class="delete-reminder-btn text-red-500 hover:text-red-700 font-bold">✕</button>
-                    `;
-                    reminderList.appendChild(item);
-                });
-            };
-
-            const checkReminders = () => {
-                const today = dayjs().date();
-                const currentMonth = dayjs().month();
-                const currentYear = dayjs().year();
-                const reminders = sheetData.reminders || [];
-                const transactions = sheetData.transactions || [];
-                let pendingReminders = [];
-
-                reminders.forEach(reminder => {
-                    if (today >= reminder.day) {
-                        const isPaid = transactions.some(t => 
-                            dayjs(t.date).year() === currentYear &&
-                            dayjs(t.date).month() === currentMonth && 
-                            t.category === reminder.name
-                        );
-                        if (!isPaid) {
-                            pendingReminders.push(reminder.name);
-                        }
-                    }
-                });
-
-                if (pendingReminders.length > 0) {
-                    reminderText.textContent = `リマインダー: ${pendingReminders.join(', ')} の支払いを記録してください。`;
-                    reminderBanner.classList.remove('hidden');
-                } else {
-                    reminderBanner.classList.add('hidden');
-                }
-            };
-
-            addReminderBtn.addEventListener('click', () => {
-                const name = reminderNameInput.value;
-                const day = parseInt(reminderDayInput.value);
-                const email = reminderEmailInput.value;
-                if (!name || !day) {
-                    showMessage('項目名と日付を入力してください。', 'error');
-                    return;
-                }
-                const reminderData = { id: Date.now(), name, day, email };
-                postDataToSheet('addReminder', { data: reminderData });
-                reminderNameInput.value = '';
-                reminderDayInput.value = '';
-                reminderEmailInput.value = '';
-            });
-
-            reminderList.addEventListener('click', (e) => {
-                if (e.target.classList.contains('delete-reminder-btn')) {
-                    const id = e.target.dataset.id;
-                    postDataToSheet('deleteReminder', { id });
-                }
-            });
-
-            closeReminderBtn.addEventListener('click', () => {
-                reminderBanner.classList.add('hidden');
-            });
-
             const initializeApp = () => {
                 appsScriptUrlInput.value = localStorage.getItem('appsScriptUrl') || '';
                 spreadsheetUrlInput.value = localStorage.getItem('spreadsheetUrl') || '';
