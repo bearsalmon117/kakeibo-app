@@ -6,7 +6,7 @@
     <title>対話型家計簿ダッシュボード (スプレッドシート連携版)</title>
     <!-- Chosen Palette: Warm Neutrals with Soft Accents -->
     <!-- Application Structure Plan: The app now features a two-page layout managed by showing/hiding divs. The main page contains the dashboard, and a new "Details" page shows a breakdown of trip expenses by destination (memo). A memo field has been added to the reimbursement form. -->
-    <!-- Visualization & Content Choices: Added a new conditional input section for "Expenses during a business trip" with its own sub-category buttons, separate from the main "Business Trip" category inputs. The submission logic is updated to handle this new input path. -->
+    <!-- Visualization & Content Choices: The data submission logic for "出張中の費用" has been updated to record the main category in the category column and a composite memo (destination_date_subcategory) in the memo column, as requested. -->
     <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
@@ -252,8 +252,15 @@
                     finalMemo = `${memoInput.value}_${selectedTripType}_${tripDate}`;
                 } else if (mainCategory === '出張中の費用') {
                     if (!selectedDuringTripCategory) { showMessage('出張中の費用の内訳を選択してください。', 'error'); return; }
-                    finalCategory = selectedDuringTripCategory;
-                    if (finalCategory === 'その他（出張中）') { finalMemo = duringTripMemoInput.value; }
+                    finalCategory = '出張中の費用'; // Keep main category
+                    const subCategory = selectedDuringTripCategory;
+                    const destination = memoInput.value;
+                    const tripDate = tripDateInput.value ? dayjs(tripDateInput.value).format('YYYYMMDD') : dayjs().format('YYYYMMDD');
+                    if (subCategory === 'その他（出張中）') {
+                        finalMemo = `${destination}_${tripDate}_${duringTripMemoInput.value}`;
+                    } else {
+                        finalMemo = `${destination}_${tripDate}_${subCategory}`;
+                    }
                 }
 
                 const transactionData = { date: new Date().toISOString(), category: finalCategory, amount, memo: finalMemo };
@@ -287,8 +294,8 @@
                 const isOther = value === 'その他';
                 const isFixedCost = value === '固定費';
 
-                memoContainer.classList.toggle('hidden', !isTripExpense && !isOther);
-                tripDateContainer.classList.toggle('hidden', !isTripExpense);
+                memoContainer.classList.toggle('hidden', !isTripExpense && !isDuringTrip && !isOther);
+                tripDateContainer.classList.toggle('hidden', !isTripExpense && !isDuringTrip);
                 tripTypeContainer.classList.toggle('hidden', !isTripExpense);
                 fixedCostContainer.classList.toggle('hidden', !isFixedCost);
                 duringTripExpenseContainer.classList.toggle('hidden', !isDuringTrip);
